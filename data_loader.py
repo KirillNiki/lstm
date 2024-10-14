@@ -68,61 +68,36 @@ class Data_generator(Dataset):
     self.tokenizer_length = len(self.tokenizer)
     self.pad_word_index = self.tokenizer(self.pad_word)
     
-    try:
-      self.df = pd.read_csv(DATASET_FILE_PATH)
-      test = self.df.iloc[0].to_numpy()
-      print()
-    except:
-      data = self.generate_data()
-      self.df = pd.DataFrame(data)
-      self.df.to_csv(DATASET_FILE_PATH)
-      
-  def generate_data(self):
-    data = None
     with open(self.data_file_path, 'r') as data_file:
       lines = data_file.readlines()
+    self.ind_lines = []
       
-      for ind, line in enumerate(lines):
-        words = line.split()
-        ind_line = []
-        
-        for word in words:
-          ind_line.append(self.tokenizer(word))
-          
-        for word_ind in range(1, len(ind_line)):
-          contexts = []
-          
-          for i in range(word_ind):
-            context = [0.]*self.tokenizer_length
-            context[ind_line[i]] = 1.
-            contexts.append(context)
-          while len(contexts) < self.max_sentence_len - 1:
-            context = [0.]*self.tokenizer_length
-            context[self.pad_word_index] = 1.
-            contexts.insert(0, context)
-            
-          target = [0.]*self.tokenizer_length
-          target[ind_line[word_ind]] = 1.
-          contexts.append(target)          
-          contexts = np.array(contexts)
-          contexts = np.reshape(contexts, (1, np.prod(contexts.shape)))
-
-          df = pd.DataFrame(contexts)
-          df.to_csv(DATASET_FILE_PATH, mode='a', index=False, header=False)
-          
-          
-          # if data is None:
-          #   data = contexts
-          # else:
-          #   data = np.append(data, contexts, axis=0)
-    # return data
-  
+    for line in lines:
+      ind_line = []
+      for word in line.split():
+        ind_line.append(self.tokenizer(word))
+      self.ind_lines.append(ind_line)
+      
   def __len__(self):
     return self.df.shape[0]
 
   def __getitem__(self, index):
-    context , target = self.df.iloc[index].to_numpy()
-    return torch.tensor(context), torch.tensor(target)
+    sentence_ind = index // (self.max_sentence_len -1)
+    word_in_sent_ind = index % (self.max_sentence_len - 1) + 1
+    context = torch.zeros((1, self.max_sentence_len-1, self.tokenizer_length))
+    target = torch.zeros((1, self.tokenizer_length))
+    context_ind = self.max_sentence_len - 2
+    
+    for i in range(word_in_sent_ind-1, -1, -1):
+      context_word_ind = self.ind_lines[sentence_ind][i]
+      context[0][context_ind][context_word_ind] = 1.
+      context_ind -= 1
+    while (context_ind > -1):
+      context[0][context_ind][self.pad_word_index] = 1.
+      context_ind -= 1
+    target[0][self.ind_lines[sentence_ind][word_in_sent_ind]] = 1.
+    
+    return context, target
 
 
 def prepare_string(text):
@@ -157,4 +132,5 @@ def create_datafile(target_file_path, source_file_path, max_sentence_len):
 if __name__ == '__main__':
   # create_datafile(DATA_FILE_PATH, SOURCE_DATA_FILE_PATH, MAX_WINDOW_LEN)
   test = Data_generator(DATA_FILE_PATH, MAX_WINDOW_LEN, PAD_WORD)
+  test.__getitem__(0)
   print()

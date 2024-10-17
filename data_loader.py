@@ -4,30 +4,23 @@ import regex as re
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-import pandas as pd
 
 from environment import *
 
 
-DATASET_FILE_PATH = 'data/data.csv'
-
-
 class Tokenizer():
-  def __init__(self, word2ind_path='/home/kirill/develop/python/diffrent_things/lstm/data/word2ind.json'):
-    self.word2ind_path = word2ind_path
+  def __init__(self):
     try:
-      with open(self.word2ind_path, 'r') as file:
+      with open(WORD2IND_PATH, 'r') as file:
         string = file.readline()
       self.word2ind = json.loads(string)
     except:
       self.word2ind = {}
-      
     self.index = len(self.word2ind)
     
-  def generate_dict(self, data_file_path, pad_word):
-    self.add_words([pad_word])
-    
-    with open(data_file_path, 'r') as data_file:
+  def generate_dict(self):
+    self.add_words([PAD_WORD])
+    with open(TOKENIZER_DATA_PATH, 'r') as data_file:
       for line in data_file.readlines():
         words = line.split()
         self.add_words(words)
@@ -49,55 +42,24 @@ class Tokenizer():
       index = self.word2ind[word]
     except:
       index = None
-      
     return index
   
   def save(self):
-    with open(self.word2ind_path, 'w') as file:
+    with open(WORD2IND_PATH, 'w') as file:
       string = json.dumps(self.word2ind)
       file.writelines(string)
 
 
 class Data_generator(Dataset):
-  def __init__(self, data_file_path, max_sentence_len, pad_word):
-    self.tokenizer = Tokenizer()
-    self.data_file_path = data_file_path
-    self.max_sentence_len = max_sentence_len
-    self.pad_word = pad_word
-    
-    self.tokenizer_length = len(self.tokenizer)
-    self.pad_word_index = self.tokenizer(self.pad_word)
-    
-    with open(self.data_file_path, 'r') as data_file:
-      lines = data_file.readlines()
-    self.ind_lines = []
-      
-    for line in lines:
-      ind_line = []
-      for word in line.split():
-        ind_line.append(self.tokenizer(word))
-      self.ind_lines.append(ind_line)
-      
+  def __init__(self):
+    self.data = np.load(DATA_FILE_PATH)
+
   def __len__(self):
-    return self.df.shape[0]
+    return self.data.shape[0]
 
   def __getitem__(self, index):
-    sentence_ind = index // (self.max_sentence_len -1)
-    word_in_sent_ind = index % (self.max_sentence_len - 1) + 1
-    context = torch.zeros((1, self.max_sentence_len-1, self.tokenizer_length))
-    target = torch.zeros((1, self.tokenizer_length))
-    context_ind = self.max_sentence_len - 2
-    
-    for i in range(word_in_sent_ind-1, -1, -1):
-      context_word_ind = self.ind_lines[sentence_ind][i]
-      context[0][context_ind][context_word_ind] = 1.
-      context_ind -= 1
-    while (context_ind > -1):
-      context[0][context_ind][self.pad_word_index] = 1.
-      context_ind -= 1
-    target[0][self.ind_lines[sentence_ind][word_in_sent_ind]] = 1.
-    
-    return context, target
+    return self.data[index]
+
 
 
 def prepare_string(text):
@@ -112,25 +74,41 @@ def prepare_string(text):
     return words
 
 
-def create_datafile(target_file_path, source_file_path, max_sentence_len):
-  with open(target_file_path, 'w') as target_file:
-    target_file.write('')
+def create_data():
+  tokenizer = Tokenizer()
+  tokenizer.generate_dict()
+  tokenizer_length = len(tokenizer)
+  pad_word_index = tokenizer(PAD_WORD)
   
-  with open(target_file_path, 'a') as target_file:
-    with open(source_file_path, 'r') as source_file:
-      json_strings = source_file.readlines()
-  
-      for json_string in json_strings:
-        json_data = json.loads(json_string)
-        string = json_data['passage']
+  with open(SOURCE_DATA_FILE_PATH, 'r') as source_file:
+    json_strings = source_file.readlines()
+    data_count = len(json_strings) * (MAX_WINDOW_LEN-1)
+    # add_length = 1 if data_count % BATCH_SIZE > 0 else 0
+    data = np.zeros((data_count, MAX_WINDOW_LEN, tokenizer_length), dtype=np.float32)
 
-        words = prepare_string(string)
-        words = words if len(words) <= max_sentence_len else words[:max_sentence_len]
-        string = ' '.join(words)
-        target_file.write(f'{string}\n')
+    for sent_ind, json_string in enumerate(json_strings):
+      json_data = json.loads(json_string)
+      string = json_data['passage']
+      
+      words = prepare_string(string)
+      words = words if len(words) <= MAX_WINDOW_LEN else words[:MAX_WINDOW_LEN]
+      word_inds = [tokenizer(word) for word in words]
+      
+      for in_sent_ind in range(1, MAX_WINDOW_LEN):
+        data_index = sent_ind*(MAX_WINDOW_LEN-1) + in_sent_ind -1
+        # index = (data_index) // BATCH_SIZE
+        # batch_index = (data_index) % BATCH_SIZE
+
+        word_one_inds = word_inds[:in_sent_ind + 1]
+        while (len(word_one_inds) < MAX_WINDOW_LEN): word_one_inds.insert(0, pad_word_index)
+        for i in range(len(word_one_inds)):
+          data[data_index][i][word_one_inds[i]] = 1.
+  np.save(DATA_FILE_PATH, data)
+
 
 if __name__ == '__main__':
-  # create_datafile(DATA_FILE_PATH, SOURCE_DATA_FILE_PATH, MAX_WINDOW_LEN)
-  test = Data_generator(DATA_FILE_PATH, MAX_WINDOW_LEN, PAD_WORD)
-  test.__getitem__(0)
-  print()
+  # create_data()
+  gen = Data_generator()
+  print(len(gen))
+  test = gen.__getitem__(0)
+  print(test.shape)
